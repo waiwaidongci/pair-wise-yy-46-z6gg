@@ -47,6 +47,50 @@ export type ClaimCase = {
   lossItems: LossItem[]
   approvals: ApprovalStep[]
   audit: Array<{ id: string; at: string; operator: string; action: string; detail: string }>
+  surveyNotes: string[]
+}
+
+export type SyncOperationType = 'loss-item' | 'attachment' | 'draft-note'
+
+export type SyncOperationStatus = '待同步' | '同步中' | '同步失败' | '已同步' | '有冲突'
+
+export type SyncChange = {
+  field: string
+  label: string
+  base: unknown
+  value: unknown
+}
+
+export type SyncConflict = {
+  opId: string
+  itemId: string
+  target: string
+  field: string
+  localValue: string
+  remoteValue: string
+  resolution: string
+}
+
+export type SyncOperation = {
+  opId: string
+  claimId: string
+  type: SyncOperationType
+  itemId?: string
+  attachmentId?: string
+  summary: string
+  changes: SyncChange[]
+  status: SyncOperationStatus
+  attempts: number
+  createdAt: string
+  syncedAt?: string
+  lastError?: string
+  conflicts?: SyncConflict[]
+}
+
+export type SyncResult = {
+  duplicate: boolean
+  conflicts: SyncConflict[]
+  claim: ClaimCase
 }
 
 export type ClaimFilters = {

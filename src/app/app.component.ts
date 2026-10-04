@@ -10,7 +10,8 @@ import { MatChipsModule } from '@angular/material/chips'
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar'
 import { Store } from '@ngrx/store'
 import { ClaimsService } from './core/claims.service'
-import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/claims.store'
+import { SyncService } from './core/sync.service'
+import { loadClaimsSuccess, selectClaimsState, selectLastSyncAt, selectPendingCount, type AppState } from './core/claims.store'
 
 @Component({
   selector: 'app-root',
@@ -57,8 +58,10 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
           </a>
         </mat-nav-list>
         <div class="side-note">
-          <div class="sync"><i></i> 可恢复草稿已保存</div>
-          <small>最后同步 16:42 · 规则版本 2026.09</small>
+          <div class="sync" [class.pending]="(pendingCount$ | async)">
+            <i></i> {{ (pendingCount$ | async) ? '待同步 ' + (pendingCount$ | async) + ' 项操作' : '全部操作已同步' }}
+          </div>
+          <small>最后同步 {{ (lastSyncAt$ | async) || '—' }} · 规则版本 2026.09</small>
         </div>
       </mat-sidenav>
       <mat-sidenav-content>
@@ -84,6 +87,7 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
     .side-note { position: absolute; right: 12px; bottom: 14px; left: 12px; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.04); }
     .sync { font-size: 11px; font-weight: 700; }
     .sync i { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: #56b989; }
+    .sync.pending i { background: #e0a23c; }
     .side-note small { display: block; margin-top: 6px; color: #92a8b3; font-size: 9px; }
     .mobile-bar { display: none; }
     mat-sidenav-content { min-width: 0; }
@@ -95,20 +99,31 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
 })
 export class AppComponent implements OnInit {
   mobileOpen = false
+  readonly pendingCount$
+  readonly lastSyncAt$
+  private lastToast = ''
 
   constructor(
     private readonly service: ClaimsService,
+    private readonly syncService: SyncService,
     private readonly store: Store<AppState>,
     private readonly snackBar: MatSnackBar,
-  ) {}
+  ) {
+    this.pendingCount$ = this.store.select(selectPendingCount)
+    this.lastSyncAt$ = this.store.select(selectLastSyncAt)
+  }
 
   ngOnInit() {
-    this.service.list({ query: '', status: '', risk: '', page: 1, pageSize: 10 }).subscribe((result) => {
-      this.store.dispatch(loadClaimsSuccess({ items: result.items, total: result.total }))
+    this.service.list({ query: '', status: '', risk: '', page: 1, pageSize: 10 }).subscribe({
+      next: (result) => this.store.dispatch(loadClaimsSuccess({ items: result.items, total: result.total })),
+      error: () => undefined, // 离线时沿用本地持久化数据
     })
+    // 启动时续传待同步队列，失败进度保留可重试
+    this.syncService.syncNow()
     this.store.select(selectClaimsState).subscribe((state) => {
       localStorage.setItem('property-claims-draft-v1', JSON.stringify(state))
-      if (state.toast) this.snackBar.open(state.toast, '关闭', { duration: 1800 })
+      if (state.toast && state.toast !== this.lastToast) this.snackBar.open(state.toast, '关闭', { duration: 1800 })
+      this.lastToast = state.toast
     })
   }
 }

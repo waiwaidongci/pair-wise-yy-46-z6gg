@@ -73,6 +73,7 @@ export const seedClaims: ClaimCase[] = [
       { id: 'A-03', at: '09-18 16:05', operator: '陈立', action: '报价调整', detail: '由 680,000 调整为 742,000 元；原因：补充檩条更换及防火涂层恢复。' },
       { id: 'A-04', at: '09-19 10:30', operator: '陆嘉', action: '提交审批', detail: '准备金 1,860,000 元进入多级会签。' },
     ],
+    surveyNotes: [],
   },
   {
     id: 'CLM-2026-0927',
@@ -122,5 +123,6 @@ export const seedClaims: ClaimCase[] = [
       { id: 'A-11', at: '09-21 06:18', operator: '报案中心', action: '案件受理', detail: '台风损失报案。' },
       { id: 'A-12', at: '09-22 09:15', operator: '林澈', action: '现场查勘', detail: '上传屋顶和库区照片。' },
     ],
+    surveyNotes: [],
   },
 ]

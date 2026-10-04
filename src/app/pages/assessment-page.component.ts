@@ -11,11 +11,14 @@ import { MatSelectModule } from '@angular/material/select'
 import { MatSnackBar } from '@angular/material/snack-bar'
 import { MatTableModule } from '@angular/material/table'
 import { Store } from '@ngrx/store'
-import type { Observable } from 'rxjs'
+import { take, type Observable } from 'rxjs'
 import { ClaimsService } from '../core/claims.service'
-import type { ClaimCase } from '../core/models'
-import { selectSelectedClaim, updateClaim, type AppState } from '../core/claims.store'
+import { SyncService } from '../core/sync.service'
+import { buildClaimOps, opIdOf, timestamp } from '../core/sync.engine'
+import type { Attachment, ClaimCase, SyncOperation } from '../core/models'
+import { enqueueOps, saveAssessment, saveDraft, selectOpSeq, selectSelectedClaim, selectSyncQueue, updateClaim, type AppState } from '../core/claims.store'
 import { StatusChipComponent } from '../shared/status-chip.component'
+import { SyncQueueComponent } from '../shared/sync-queue.component'
 
 @Component({
   selector: 'app-assessment-page',
@@ -33,6 +36,7 @@ import { StatusChipComponent } from '../shared/status-chip.component'
     MatSelectModule,
     MatTableModule,
     StatusChipComponent,
+    SyncQueueComponent,
   ],
   template: `
     <section class="page" *ngIf="claim$ | async as claim">
@@ -57,7 +61,7 @@ import { StatusChipComponent } from '../shared/status-chip.component'
 
       <div class="assessment-grid">
         <section class="panel">
-          <div class="panel-head"><h3>损失科目与报价版本</h3><span class="muted">每次调整必须保留理由</span></div>
+          <div class="panel-head"><h3>损失科目与报价版本</h3><span class="muted">保存时按操作号进入待同步队列</span></div>
           <mat-accordion multi>
             <mat-expansion-panel *ngFor="let item of claim.lossItems; let itemIndex = index" [expanded]="itemIndex === activeIndex" (opened)="activeIndex = itemIndex">
               <mat-expansion-panel-header>
@@ -91,7 +95,10 @@ import { StatusChipComponent } from '../shared/status-chip.component'
                 </div>
                 <div class="attachment-row">
                   <strong>关联材料</strong>
-                  <span *ngFor="let file of item.attachments"><mat-icon>attach_file</mat-icon>{{ file.name }} · V{{ file.version }}</span>
+                  <span *ngFor="let file of item.attachments">
+                    <mat-icon>attach_file</mat-icon>{{ file.name }} · V{{ file.version }}
+                    <button mat-icon-button class="bump" (click)="bumpVersion(file)" title="上传新版本"><mat-icon>add</mat-icon></button>
+                  </span>
                 </div>
                 <button mat-stroked-button color="primary" (click)="startQuote(item)"><mat-icon>edit_road</mat-icon> 调整最新报价</button>
                 <div class="quote-form" *ngIf="quotingItemId === item.id">
@@ -116,10 +123,24 @@ import { StatusChipComponent } from '../shared/status-chip.component'
             </div>
           </section>
           <section class="panel draft-panel">
-            <div class="panel-head"><h3>查勘草稿</h3><mat-icon>cloud_done</mat-icon></div>
-            <textarea rows="7" [(ngModel)]="draft" (blur)="saveDraft(claim)"></textarea>
-            <small>离开页面后仍可恢复到本地草稿。</small>
+            <div class="panel-head"><h3>查勘草稿</h3><app-status-chip [label]="draftOpsFor(claim.id).length ? '待同步 ' + draftOpsFor(claim.id).length + ' 项' : '无待同步'" [tone]="draftOpsFor(claim.id).length ? 'warn' : 'good'" /></div>
+            <textarea rows="5" [(ngModel)]="draft" (blur)="persistDraft()" placeholder="离线时先记录，提交后按操作号进入待同步队列。"></textarea>
+            <div class="draft-actions">
+              <button mat-stroked-button color="primary" [disabled]="!draft.trim()" (click)="commitDraft(claim.id)"><mat-icon>playlist_add</mat-icon> 提交草稿到待同步队列</button>
+            </div>
+            <div class="draft-ops" *ngIf="draftOpsFor(claim.id).length">
+              <article *ngFor="let op of draftOpsFor(claim.id)">
+                <app-status-chip [label]="op.status" [tone]="op.status === '同步失败' ? 'warn' : 'default'" />
+                <span>{{ op.opId }} · {{ op.summary }}</span>
+              </article>
+            </div>
+            <div class="synced-notes" *ngIf="claim.surveyNotes?.length">
+              <strong>已同步草稿</strong>
+              <p *ngFor="let note of claim.surveyNotes">{{ note }}</p>
+            </div>
+            <small>每次提交生成独立操作号，多人草稿按操作号合并，不再互相覆盖。</small>
           </section>
+          <app-sync-queue />
         </aside>
       </div>
     </section>
@@ -145,6 +166,8 @@ import { StatusChipComponent } from '../shared/status-chip.component'
     .attachment-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
     .attachment-row span { display: inline-flex; align-items: center; gap: 3px; padding: 5px 7px; color: #4f626d; background: #f0f4f5; border-radius: 5px; font-size: 11px; }
     .attachment-row mat-icon { font-size: 14px; width: 14px; height: 14px; }
+    .attachment-row .bump { width: 22px; height: 22px; padding: 0; margin-left: 2px; }
+    .attachment-row .bump mat-icon { font-size: 15px; width: 15px; height: 15px; color: #2c7f89; }
     .quote-form { padding: 12px; background: #f4f7f8; border-left: 3px solid #277b89; }
     .reason-field { flex: 1; min-width: 220px; }
     aside { display: grid; gap: 14px; }
@@ -153,8 +176,14 @@ import { StatusChipComponent } from '../shared/status-chip.component'
     .expert-list p { margin: 6px 0 0; color: #65737c; font-size: 11px; line-height: 1.5; }
     .expert-list small { color: #8b969d; font-size: 11px; }
     .draft-panel { padding-bottom: 14px; }
-    .draft-panel textarea { width: calc(100% - 28px); margin: 14px; }
-    .draft-panel small { display: block; margin: -6px 14px 0; color: #7d8991; }
+    .draft-panel textarea { width: calc(100% - 28px); margin: 14px 14px 6px; }
+    .draft-actions { padding: 0 14px; }
+    .draft-ops { display: grid; gap: 6px; padding: 10px 14px 0; }
+    .draft-ops article { display: flex; align-items: center; gap: 7px; font-size: 11px; color: #55646d; }
+    .synced-notes { margin: 10px 14px 0; padding: 8px 10px; border-radius: 6px; background: #f0f7f4; }
+    .synced-notes strong { font-size: 11px; color: #2c6b52; }
+    .synced-notes p { margin: 5px 0 0; color: #4f6a5c; font-size: 11px; line-height: 1.5; }
+    .draft-panel small { display: block; margin: 8px 14px 0; color: #7d8991; }
     @media (max-width: 1050px) { .assessment-grid { grid-template-columns: 1fr; } .summary-grid { grid-template-columns: repeat(2,1fr); } }
     @media (max-width: 620px) { .summary-grid { grid-template-columns: 1fr 1fr; } }
   `],
@@ -166,15 +195,25 @@ export class AssessmentPageComponent {
   quotingItemId = ''
   quoteAmount = 0
   quoteReason = ''
-  draft = localStorage.getItem('claims-assessment-draft') ?? '待补充房屋檩条第三方复测依据，并核对存货库龄核减。'
+  draft = ''
+  queue: SyncOperation[] = []
+  private snapshot?: ClaimCase
 
   constructor(
     private readonly store: Store<AppState>,
     private readonly service: ClaimsService,
+    private readonly syncService: SyncService,
     private readonly snackBar: MatSnackBar,
   ) {
     this.claim$ = this.store.select(selectSelectedClaim)
+    // 快照作为保存时的合并基线，ngModel 的本地改动与之对比生成操作
+    this.claim$.subscribe((claim) => (this.snapshot = structuredClone(claim)))
     this.store.select((state) => state.claims.draft).subscribe((draft) => (this.draft = draft))
+    this.store.select(selectSyncQueue).subscribe((queue) => (this.queue = queue))
+  }
+
+  draftOpsFor(claimId: string) {
+    return this.queue.filter((op) => op.type === 'draft-note' && op.claimId === claimId && op.status !== '已同步')
   }
 
   latestQuote(item: { repairQuotes: Array<{ amount: number }> }) {
@@ -206,21 +245,60 @@ export class AssessmentPageComponent {
 
   submitQuote(claimId: string, itemId: string) {
     if (!this.quoteReason.trim()) return
-    this.service.addQuote(claimId, { itemId, amount: Number(this.quoteAmount), reason: this.quoteReason }).subscribe(() => {
-      this.store.select(selectSelectedClaim).subscribe((claim) => this.store.dispatch(updateClaim({ claim: structuredClone(claim) })))
-      this.snackBar.open('新报价版本已生成，原记录保持可追溯', '关闭', { duration: 2200 })
-      this.quotingItemId = ''
+    this.service.addQuote(claimId, { itemId, amount: Number(this.quoteAmount), reason: this.quoteReason }).subscribe({
+      next: () => {
+        this.store.select(selectSelectedClaim).subscribe((claim) => this.store.dispatch(updateClaim({ claim: structuredClone(claim) })))
+        this.snackBar.open('新报价版本已生成，原记录保持可追溯', '关闭', { duration: 2200 })
+        this.quotingItemId = ''
+      },
+      error: () => this.snackBar.open('当前离线，报价未提交，请恢复在线后重试', '关闭', { duration: 2200 }),
     })
   }
 
-  saveAll(claim: any) {
-    localStorage.setItem('claims-assessment-draft', this.draft)
-    this.store.dispatch(updateClaim({ claim: structuredClone(claim) }))
-    this.snackBar.open('查勘数据和草稿已保存', '关闭', { duration: 1800 })
+  bumpVersion(file: Attachment) {
+    file.version += 1
+    file.uploadedBy = '当前用户'
+    file.uploadedAt = timestamp()
   }
 
-  saveDraft(claim: any) {
-    localStorage.setItem('claims-assessment-draft', this.draft)
-    this.store.dispatch(updateClaim({ claim: structuredClone(claim) }))
+  saveAll(claim: ClaimCase) {
+    const base = this.snapshot ?? claim
+    this.store
+      .select(selectOpSeq)
+      .pipe(take(1))
+      .subscribe((seq) => {
+        const ops = buildClaimOps(claim.id, base, claim, seq)
+        this.store.dispatch(saveAssessment({ claim: structuredClone(claim), ops }))
+        this.snackBar.open(ops.length ? `已保存 ${ops.length} 项操作到待同步队列` : '没有需要同步的变更', '关闭', { duration: 1800 })
+        this.syncService.syncNow()
+      })
+  }
+
+  commitDraft(claimId: string) {
+    const text = this.draft.trim()
+    if (!text) return
+    this.store
+      .select(selectOpSeq)
+      .pipe(take(1))
+      .subscribe((seq) => {
+        const op: SyncOperation = {
+          opId: opIdOf(seq),
+          claimId,
+          type: 'draft-note',
+          summary: `查勘草稿：${text.length > 24 ? `${text.slice(0, 24)}…` : text}`,
+          changes: [{ field: 'surveyNote', label: '查勘草稿', base: '', value: text }],
+          status: '待同步',
+          attempts: 0,
+          createdAt: timestamp(),
+        }
+        this.store.dispatch(enqueueOps({ ops: [op] }))
+        this.store.dispatch(saveDraft({ draft: '' }))
+        this.snackBar.open(`草稿已按 ${op.opId} 进入待同步队列`, '关闭', { duration: 1800 })
+        this.syncService.syncNow()
+      })
+  }
+
+  persistDraft() {
+    this.store.dispatch(saveDraft({ draft: this.draft }))
   }
 }

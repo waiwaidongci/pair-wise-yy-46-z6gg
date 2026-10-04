@@ -136,10 +136,13 @@ export class ReviewPageComponent {
   decide(claimId: string, role: string, result: string, index: number) {
     const comment = this.comments[index]?.trim()
     if (!comment) return
-    this.service.approve(claimId, { role, result, comment }).subscribe(() => {
-      this.store.select(selectSelectedClaim).subscribe((claim) => this.store.dispatch(updateClaim({ claim: structuredClone(claim) })))
-      this.snackBar.open(result === '已通过' ? '会签通过，已流转至下一级' : '案件已退回补件，原始记录未修改', '关闭', { duration: 2200 })
-      this.comments[index] = ''
+    this.service.approve(claimId, { role, result, comment }).subscribe({
+      next: () => {
+        this.store.select(selectSelectedClaim).subscribe((claim) => this.store.dispatch(updateClaim({ claim: structuredClone(claim) })))
+        this.snackBar.open(result === '已通过' ? '会签通过，已流转至下一级' : '案件已退回补件，原始记录未修改', '关闭', { duration: 2200 })
+        this.comments[index] = ''
+      },
+      error: () => this.snackBar.open('当前离线，会签未提交，请恢复在线后重试', '关闭', { duration: 2200 }),
     })
   }
 }
