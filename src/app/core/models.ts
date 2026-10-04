@@ -57,6 +57,73 @@ export type ClaimFilters = {
   pageSize: number
 }
 
+// ---- 离线同步待办队列 ----
+
+export type SyncItemStatus = 'pending' | 'syncing' | 'failed' | 'synced'
+
+export type OpKind = 'lossItem' | 'attachment' | 'quote' | 'text'
+
+export type FieldChange = {
+  itemId: string
+  field: string
+  baseValue: unknown
+  localValue: unknown
+}
+
+export type OpPayload = {
+  text?: string
+  changes?: FieldChange[]
+  attachments?: Array<{ itemId: string; attachment: Attachment; baseAttachmentVersion: number }>
+  quote?: { itemId: string; amount: number; reason: string }
+}
+
+export type PendingSyncItem = {
+  opNo: string
+  claimId: string
+  kind: OpKind
+  status: SyncItemStatus
+  baseVersion: number
+  payload: OpPayload
+  conflicts: SyncConflict[]
+  retries: number
+  error: string
+  legacy: boolean
+  createdAt: string
+  updatedAt: string
+  syncedAt?: string
+}
+
+export type SyncConflict = {
+  id: string
+  opNo: string
+  claimId: string
+  itemId?: string
+  attachmentId?: string
+  field: string
+  baseValue: unknown
+  localValue: unknown
+  remoteValue: unknown
+  detectedAt: string
+}
+
+export type SyncLogEntry = {
+  id: string
+  opNo: string
+  claimId: string
+  kind: OpKind
+  event: 'enqueued' | 'sync_started' | 'sync_failed' | 'sync_succeeded' | 'conflict_detected' | 'duplicate_skipped'
+  at: string
+  detail: string
+  ts: number
+}
+
+export type SyncResult = {
+  claim: ClaimCase
+  conflicts: SyncConflict[]
+  applied: boolean
+  duplicated: boolean
+}
+
 export type PagedClaims = {
   items: ClaimCase[]
   total: number

@@ -10,7 +10,8 @@ import { MatChipsModule } from '@angular/material/chips'
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar'
 import { Store } from '@ngrx/store'
 import { ClaimsService } from './core/claims.service'
-import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/claims.store'
+import { OfflineSyncService } from './core/offline-sync.service'
+import { loadClaimsSuccess, selectClaimsState, selectFailedCount, selectPendingCount, type AppState } from './core/claims.store'
 
 @Component({
   selector: 'app-root',
@@ -57,7 +58,12 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
           </a>
         </mat-nav-list>
         <div class="side-note">
-          <div class="sync"><i></i> 可恢复草稿已保存</div>
+          <div class="sync" [class.has-pending]="pendingCount > 0" [class.has-failed]="failedCount > 0">
+            <i></i>
+            <ng-container *ngIf="failedCount > 0">{{ failedCount }} 项同步失败，可重试</ng-container>
+            <ng-container *ngIf="failedCount === 0 && pendingCount > 0">{{ pendingCount }} 项待同步</ng-container>
+            <ng-container *ngIf="pendingCount === 0 && failedCount === 0">可恢复草稿已保存</ng-container>
+          </div>
           <small>最后同步 16:42 · 规则版本 2026.09</small>
         </div>
       </mat-sidenav>
@@ -84,6 +90,8 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
     .side-note { position: absolute; right: 12px; bottom: 14px; left: 12px; padding: 12px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(255,255,255,.04); }
     .sync { font-size: 11px; font-weight: 700; }
     .sync i { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: #56b989; }
+    .sync.has-pending i { background: #e0a03b; }
+    .sync.has-failed i { background: #d9534f; }
     .side-note small { display: block; margin-top: 6px; color: #92a8b3; font-size: 9px; }
     .mobile-bar { display: none; }
     mat-sidenav-content { min-width: 0; }
@@ -95,9 +103,12 @@ import { loadClaimsSuccess, selectClaimsState, type AppState } from './core/clai
 })
 export class AppComponent implements OnInit {
   mobileOpen = false
+  pendingCount = 0
+  failedCount = 0
 
   constructor(
     private readonly service: ClaimsService,
+    private readonly offlineSync: OfflineSyncService,
     private readonly store: Store<AppState>,
     private readonly snackBar: MatSnackBar,
   ) {}
@@ -110,5 +121,9 @@ export class AppComponent implements OnInit {
       localStorage.setItem('property-claims-draft-v1', JSON.stringify(state))
       if (state.toast) this.snackBar.open(state.toast, '关闭', { duration: 1800 })
     })
+    this.store.select(selectPendingCount).subscribe((count) => (this.pendingCount = count))
+    this.store.select(selectFailedCount).subscribe((count) => (this.failedCount = count))
+    // 旧数据兼容：纯文本草稿已补入待同步队列，启动后自动尝试同步
+    setTimeout(() => this.offlineSync.syncAll(), 400)
   }
 }

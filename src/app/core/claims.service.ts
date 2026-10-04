@@ -1,6 +1,6 @@
 import { HttpClient, HttpParams } from '@angular/common/http'
 import { Injectable } from '@angular/core'
-import type { ClaimCase, ClaimFilters, PagedClaims } from './models'
+import type { ClaimCase, ClaimFilters, OpKind, OpPayload, PagedClaims, SyncResult } from './models'
 
 @Injectable({ providedIn: 'root' })
 export class ClaimsService {
@@ -26,5 +26,15 @@ export class ClaimsService {
 
   approve(claimId: string, body: { role: string; result: string; comment: string }) {
     return this.http.post(`/api/claims/${claimId}/approvals`, body)
+  }
+
+  /** 按操作号提交待同步项；服务端幂等，已生效的操作号不重复记账。 */
+  syncOp(claimId: string, opNo: string, kind: OpKind, payload: OpPayload, baseVersion: number, attempt: number) {
+    return this.http.post<SyncResult>(`/api/claims/${claimId}/sync`, { opNo, kind, payload, baseVersion, attempt })
+  }
+
+  /** 模拟远端他人变更同一字段（演示冲突检测）。 */
+  simulateRemote(claimId: string, itemId: string, field: string, value: unknown) {
+    return this.http.post<ClaimCase>(`/api/claims/${claimId}/simulate-remote`, { itemId, field, value })
   }
 }
